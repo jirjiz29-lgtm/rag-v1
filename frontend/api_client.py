@@ -1,4 +1,4 @@
-"""HTTP client the Streamlit UI uses to talk to the FastAPI backend. Holds no secrets."""
+"""Client the Streamlit UI uses to talk to the FastAPI backend, over HTTP or in-process. Holds no secrets."""
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
@@ -11,13 +11,15 @@ class APIError(Exception):
 
 
 class BackendClient:
-    def __init__(self, base_url: str, timeout: float = 300.0):
+    def __init__(self, base_url: str, timeout: float = 300.0, session: Any = None):
+        """`session` can be an in-process client (FastAPI TestClient) exposing `.request()`; default is HTTP."""
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self._send = session.request if session is not None else requests.request
 
     def _request(self, method: str, path: str, **kwargs) -> Any:
         try:
-            resp = requests.request(method, f"{self.base_url}{path}", timeout=kwargs.pop("timeout", self.timeout), **kwargs)
+            resp = self._send(method, f"{self.base_url}{path}", timeout=kwargs.pop("timeout", self.timeout), **kwargs)
         except requests.ConnectionError as exc:
             raise APIError(f"Cannot reach the backend at {self.base_url}. Is the API server running?") from exc
         except requests.Timeout as exc:

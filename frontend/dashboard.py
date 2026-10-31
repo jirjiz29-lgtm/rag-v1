@@ -17,7 +17,10 @@ import streamlit as st
 
 from frontend.api_client import APIError, BackendClient
 
-BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
+# Unset or "embedded": run the API inside this Streamlit process (needed on Streamlit Community Cloud,
+# which runs only `streamlit run app.py`). Otherwise talk to a separately started API server over HTTP.
+BACKEND_URL = os.getenv("BACKEND_URL", "").strip() or "embedded"
+EMBEDDED = BACKEND_URL.lower() == "embedded"
 HISTORY_FILE = Path(__file__).resolve().parent.parent / "data" / "chat_history.json"
 
 NAV = [
@@ -48,7 +51,21 @@ THEMES = {
 
 
 # --------------------------------------------------------------------------- state & persistence
+@st.cache_resource(show_spinner="Loading the knowledge base and embedding model…")
+def _embedded_backend():
+    """One in-process API per Streamlit server, shared by all sessions."""
+    from fastapi.testclient import TestClient
+
+    from main import create_app
+
+    client = TestClient(create_app(), raise_server_exceptions=False)
+    client.__enter__()  # runs the app's startup: builds services and syncs the knowledge_base folder
+    return client
+
+
 def api() -> BackendClient:
+    if EMBEDDED:
+        return BackendClient("http://embedded", session=_embedded_backend())
     return BackendClient(BACKEND_URL)
 
 
@@ -225,7 +242,7 @@ def sidebar() -> None:
             st.caption(f"{health['documents']} documents · {health['chunks']} chunks")
         except APIError:
             st.markdown("<span class='pill warn'>● Backend offline</span>", unsafe_allow_html=True)
-            st.caption(f"Expected at {BACKEND_URL}")
+            st.caption("Embedded backend failed to start - see the app logs." if EMBEDDED else f"Expected at {BACKEND_URL}")
         st.toggle("Dark mode", key="dark_mode")
 
 
@@ -609,7 +626,8 @@ def page_settings() -> None:
     page_header("System Settings", "Backend configuration and per-session retrieval controls.")
     settings = cached_settings()
     if settings is None:
-        st.error(f"Cannot reach the backend at {BACKEND_URL}.")
+        st.error("The embedded backend failed to start - see the app logs." if EMBEDDED
+                 else f"Cannot reach the backend at {BACKEND_URL}.")
         return
     c1, c2 = st.columns(2)
     with c1.container(border=True):

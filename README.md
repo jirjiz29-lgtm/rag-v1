@@ -181,6 +181,32 @@ Open http://localhost:8501. API docs are at http://127.0.0.1:8000/docs.
 
 This copies 6 files into `knowledge_base/`. They're indexed automatically when the API starts, or immediately with **Sync folder** on the Knowledge Base page.
 
+### Deploying to Streamlit Community Cloud
+
+Community Cloud runs only `streamlit run app.py`; there is no separate API server. When `BACKEND_URL` is unset (or `embedded`), the dashboard runs the FastAPI app inside the Streamlit process through FastAPI's in-memory client: same endpoints, validation and errors, one process. Locally, `.env` keeps `BACKEND_URL=http://127.0.0.1:8000`, so `start.sh` works as before.
+
+1. Push the repo to GitHub (done: `jirjiz29-lgtm/rag-v1`).
+2. Go to <https://share.streamlit.io>, choose **Create app → Deploy a public app from GitHub**, and set:
+   - Repository `jirjiz29-lgtm/rag-v1`, branch `main`, main file path `app.py`
+   - **Advanced settings → Python version: 3.12.** `requirements.txt` installs CPU-only PyTorch for Linux + Python 3.12. Other versions fall back to the multi-GB GPU build.
+   - **Advanced settings → Secrets** (TOML). Top-level secrets become environment variables, which `config.py` reads:
+     ```toml
+     LLM_PROVIDER = "gemini"
+     GEMINI_API_KEY = "your-gemini-key"
+     GEMINI_MODEL = "gemini-3.8-flash"
+     GEMINI_FALLBACK_MODELS = "gemini-3.5-flash-lite"
+     LLM_TIMEOUT_SECONDS = "20"
+     ```
+     Do **not** set `BACKEND_URL` there.
+3. Deploy. The first start downloads the embedding model and indexes `knowledge_base/`, so it takes a minute or two.
+
+Things to know before putting company documents on Community Cloud:
+- **The knowledge base starts empty.** `knowledge_base/` is git-ignored, so your documents aren't in the repo. Upload them on the **Upload Documents** page after deploying.
+- **Storage is temporary.** Uploads and the index live on the container's disk and are lost when the app restarts, sleeps or redeploys. You then upload again. For permanent storage, either commit the documents to a *private* repo (remove `knowledge_base/*` from `.gitignore`; they are indexed automatically on start), or host the app where disk persists.
+- **Apps are public by default.** Anyone with the URL could ask questions about your documents. In the app's **Settings → Sharing**, restrict who can view it, and follow your company's data policy.
+
+**"The app's code is not connected to a remote GitHub repository"** (from the local **Deploy** button): Streamlit checks the git repo of the folder it was started from, so it only sees a repo and remote that already existed when the server started. Restart `streamlit run app.py` from the repo folder after pushing, or skip the button and create the app directly at share.streamlit.io as above.
+
 ## 7. Using the dashboard
 
 - **AI Knowledge Assistant**: ask questions. Inline citations appear as numbers `[1]`, `[2]`; hover one to see its document, page and section. Under each answer, **Sources** lists one expandable entry per cited passage. Each entry has a details table (document, page or why there is none, section, category, passage position, relevance, upload date), the passage with its supporting sentences highlighted, and a **Show surrounding text** toggle that loads the passages before and after it. **Inspect all retrieved passages** shows everything the search returned, with cited ones marked. You also get a **Conflicting information** warning when documents disagree. **Search scope** limits a question to chosen categories or documents. **Clear chat** resets the conversation.
@@ -226,7 +252,7 @@ The fictional "Brightpath Solutions" files in `sample_documents/` are only test 
 .venv/bin/python -m pytest -v
 ```
 
-The offline suite (75 tests) uses real document parsing, real embeddings and a real Chroma store. A deterministic `FakeLLM` stands in for the model, so no API key or network is needed after the embedding model is cached. It covers the required scenarios:
+The offline suite (77 tests) uses real document parsing, real embeddings and a real Chroma store. A deterministic `FakeLLM` stands in for the model, so no API key or network is needed after the embedding model is cached. It covers the required scenarios:
 
 | Requirement | Tests |
 |---|---|
@@ -240,6 +266,7 @@ The offline suite (75 tests) uses real document parsing, real embeddings and a r
 | Markdown support | `test_markdown_sections_and_code_fences` (nested heading paths, code fences ignored, indexed and retrieved) |
 | Validation & security | unsupported/empty/fake-PDF uploads, path traversal, key value never returned by `/health` or `/settings`, missing-key error |
 | Gemini client | request shape (system instruction, JSON schema, role mapping), fallback to the next model on 429/503/504, no fallback on auth/404 errors, error mapping, blocked/truncated/unreadable responses |
+| Embedded mode | `tests/test_embedded.py`: the dashboard's client drives upload, chat with citations, chunk inspection, delete and error reporting in-process |
 | Citations | `tests/test_citations.py`: every citation field equals the stored chunk metadata (PDF, DOCX, TXT), exact PDF page and section, no page numbers for non-paged formats, out-of-range pages rejected, invented `(page N)` and `[S#]` references removed, highlights verbatim, heading lines never highlighted |
 | Claude client | exact request shape (model, adaptive thinking, effort, JSON schema, prompt caching, fallbacks beta) and error mapping, via the real SDK against a mocked HTTP transport |
 
