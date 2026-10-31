@@ -16,10 +16,14 @@ class BackendClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self._send = session.request if session is not None else requests.request
+        self._in_process = session is not None
 
     def _request(self, method: str, path: str, **kwargs) -> Any:
+        timeout = kwargs.pop("timeout", self.timeout)
+        if not self._in_process:  # in-process calls can't time out, and TestClient deprecates `timeout`
+            kwargs["timeout"] = timeout
         try:
-            resp = self._send(method, f"{self.base_url}{path}", timeout=kwargs.pop("timeout", self.timeout), **kwargs)
+            resp = self._send(method, f"{self.base_url}{path}", **kwargs)
         except requests.ConnectionError as exc:
             raise APIError(f"Cannot reach the backend at {self.base_url}. Is the API server running?") from exc
         except requests.Timeout as exc:
