@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
+from backend.citations import location_label, page_note, valid_page, valid_section
 from backend.vector_database import VectorDatabase
 
 
@@ -21,15 +22,36 @@ class RetrievedChunk:
     category: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def file_type(self) -> str:
+        return str(self.metadata.get("file_type", "")).lower()
+
+    @property
+    def total_pages(self) -> Optional[int]:
+        total = self.metadata.get("total_pages")
+        return total if isinstance(total, int) and self.page else None
+
+    @property
+    def citation(self) -> str:
+        return location_label(self.document, self.page, self.total_pages, self.section)
+
     def to_dict(self) -> Dict[str, Any]:
+        """Citation record. Every field is copied from the chunk's stored metadata - none from the model."""
         return {
             "source_id": self.source_id,
             "chunk_id": self.chunk_id,
             "doc_id": self.doc_id,
             "document": self.document,
+            "file_type": self.file_type,
             "page": self.page,
+            "total_pages": self.total_pages,
+            "page_note": page_note(self.file_type, self.page),
             "section": self.section,
             "category": self.category,
+            "chunk_index": self.metadata.get("chunk_index"),
+            "chunk_total": self.metadata.get("chunk_total"),
+            "uploaded_at": self.metadata.get("uploaded_at"),
+            "citation": self.citation,
             "score": round(self.score, 4),
             "excerpt": self.text,
         }
@@ -88,8 +110,8 @@ class Retriever:
                     document=meta.get("source", "Unknown document"),
                     text=doc.page_content,
                     score=score,
-                    page=meta.get("page"),
-                    section=meta.get("section"),
+                    page=valid_page(meta),
+                    section=valid_section(meta),
                     category=meta.get("category"),
                     metadata=meta,
                 )

@@ -110,7 +110,7 @@ def _make_docs(sections: List[Tuple[str, str]], base_meta: dict, page: Optional[
         if not body:
             continue
         meta = dict(base_meta)
-        meta["section"] = heading or "General"
+        meta["section"] = heading or ""  # empty = no heading; never invent one
         if page is not None:
             meta["page"] = page
         docs.append(Document(page_content=body, metadata=meta))

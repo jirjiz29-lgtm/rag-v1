@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import uuid
 from datetime import datetime
 from html import escape
@@ -173,6 +174,12 @@ textarea, input, [data-baseweb="select"] > div, [data-baseweb="input"] {{ backgr
 .pill.warn {{ color:var(--warn); background:transparent; border:1px solid var(--warn); }}
 .excerpt {{ background:var(--surface2); border-left:3px solid var(--accent); border-radius:6px; padding:.6rem .8rem; font-size:.88rem; white-space:pre-wrap; color:var(--text); }}
 .src-meta {{ font-size:.82rem; color:var(--muted); margin-bottom:.4rem; }}
+.excerpt mark {{ background:color-mix(in srgb, var(--accent) 22%, transparent); color:var(--text); padding:0 .1rem; border-radius:3px; font-weight:600; }}
+.muted-excerpt {{ border-left-color:var(--border); color:var(--muted); margin-bottom:.5rem; }}
+.src-table {{ border-collapse:collapse; font-size:.84rem; margin:.1rem 0 .8rem; width:100%; }}
+.src-table th {{ text-align:left; color:var(--muted); font-weight:600; padding:.2rem .8rem .2rem 0; white-space:nowrap; vertical-align:top; width:7rem; }}
+.src-table td {{ padding:.2rem 0; color:var(--text); word-break:break-word; }}
+sup.cite {{ color:var(--accent); font-weight:700; cursor:help; margin-left:1px; }}
 .empty {{ text-align:center; padding:2.5rem 1rem; color:var(--muted); border:1px dashed var(--border); border-radius:14px; background:var(--surface); }}
 </style>
 """,
@@ -223,36 +230,110 @@ def sidebar() -> None:
 
 
 # --------------------------------------------------------------------------- chat rendering
+_CITE = re.compile(r"\[(S\d+)\]")
+
+
+def numbered_sources(msg: Dict) -> List[Dict]:
+    """Sources with a display number. Older saved messages may predate the `number` field."""
+    return [dict(s, number=s.get("number") or i) for i, s in enumerate(msg.get("sources") or [], start=1)]
+
+
+def source_label(src: Dict) -> str:
+    """Citation text built only from the source's stored metadata."""
+    if src.get("citation"):
+        return src["citation"]
+    parts = [src["document"]] + ([f"p. {src['page']}"] if src.get("page") else []) + ([src["section"]] if src.get("section") else [])
+    return " · ".join(parts)
+
+
+def render_answer_text(msg: Dict) -> None:
+    """Show the answer with [S#] markers turned into numbered citations that name their source on hover."""
+    by_id = {s["source_id"]: s for s in numbered_sources(msg)}
+    # Escape any HTML in the model's text first; only our own <sup> tags are allowed through.
+    text = escape(msg["content"], quote=False)
+
+    def cite(match: re.Match) -> str:
+        src = by_id.get(match.group(1))
+        if not src:
+            return ""
+        return f"<sup class='cite' title='{escape(source_label(src))}'>[{src['number']}]</sup>"
+
+    st.markdown(_CITE.sub(cite, text), unsafe_allow_html=True)
+
+
+def highlighted_excerpt(src: Dict) -> str:
+    html = escape(src["excerpt"])
+    for sentence in src.get("highlights") or []:
+        html = html.replace(escape(sentence), f"<mark>{escape(sentence)}</mark>", 1)
+    return f"<div class='excerpt'>{html}</div>"
+
+
+def neighbour_chunks(doc_id: str, index: Optional[int]) -> List[Dict]:
+    """The chunks just before and after a cited chunk, for reading it in context."""
+    if index is None:
+        return []
+    cache = st.session_state.setdefault("chunk_cache", {})
+    if doc_id not in cache:
+        cache[doc_id] = api().chunks(doc_id).get("chunks", [])
+    by_index = {c.get("metadata", {}).get("chunk_index", c.get("chunk_index")): c for c in cache[doc_id]}
+    return [by_index[i] for i in (index - 1, index + 1) if i in by_index]
+
+
+def render_source_details(src: Dict, key: str) -> None:
+    rows = [("Document", src["document"])]
+    if src.get("page"):
+        rows.append(("Page", f"{src['page']} of {src['total_pages']}" if src.get("total_pages") else str(src["page"])))
+    else:
+        rows.append(("Page", f"— ({src['page_note']})" if src.get("page_note") else "—"))
+    rows.append(("Section", src.get("section") or "— (text before the first heading)"))
+    if src.get("category"):
+        rows.append(("Category", src["category"]))
+    if src.get("chunk_index") is not None and src.get("chunk_total"):
+        rows.append(("Passage", f"{src['chunk_index'] + 1} of {src['chunk_total']} in this document"))
+    rows.append(("Relevance", f"{src['score']:.2f}"))
+    if src.get("uploaded_at"):
+        rows.append(("Uploaded", src["uploaded_at"][:10]))
+    table = "".join(f"<tr><th>{escape(k)}</th><td>{escape(str(v))}</td></tr>" for k, v in rows)
+    st.markdown(f"<table class='src-table'>{table}</table>", unsafe_allow_html=True)
+
+    label = "Supporting sentences highlighted" if src.get("highlights") else "Retrieved passage"
+    st.markdown(f"<div class='src-meta'>{label}</div>{highlighted_excerpt(src)}", unsafe_allow_html=True)
+
+    if src.get("doc_id") and st.toggle("Show surrounding text", key=f"ctx-{key}"):
+        try:
+            for chunk in neighbour_chunks(src["doc_id"], src.get("chunk_index")):
+                meta = chunk.get("metadata", {})
+                where = " · ".join(str(x) for x in (meta.get("section"), f"p. {meta['page']}" if meta.get("page") and src.get("page") else None) if x)
+                st.markdown(f"<div class='src-meta'>{escape(where or 'Adjacent passage')}</div>"
+                            f"<div class='excerpt muted-excerpt'>{escape(chunk.get('text', ''))}</div>", unsafe_allow_html=True)
+        except APIError as exc:
+            st.caption(f"Could not load surrounding text: {exc}")
+
+
 def render_sources(msg: Dict, key: str) -> None:
-    sources = msg.get("sources") or []
+    sources = numbered_sources(msg)
+    by_id = {s["source_id"]: s for s in sources}
     if msg.get("conflicts"):
         lines = "\n".join(
-            f"- {c['description']} _(sources: {', '.join(c['sources'])} — {', '.join(c.get('documents', []))})_"
+            f"- {c['description']} _(see "
+            + ", ".join(f"[{by_id[s]['number']}] {by_id[s]['document']}" if s in by_id else s for s in c["sources"])
+            + ")_"
             for c in msg["conflicts"]
         )
         st.warning(f"**Conflicting information detected**\n\n{lines}")
     if sources:
         st.markdown(f"**Sources ({len(sources)})**")
         for src in sources:
-            title = f"[{src['source_id']}] {src['document']}"
-            if src.get("page"):
-                title += f" · page {src['page']}"
-            if src.get("section"):
-                title += f" · {src['section']}"
-            with st.expander(title):
-                meta = f"Relevance {src['score']:.2f}"
-                if src.get("category"):
-                    meta += f" · {src['category']}"
-                st.markdown(f"<div class='src-meta'>{escape(meta)}</div><div class='excerpt'>{escape(src['excerpt'])}</div>",
-                            unsafe_allow_html=True)
+            with st.expander(f"[{src['number']}] {source_label(src)}"):
+                render_source_details(src, f"{key}-{src['source_id']}")
     retrieved = msg.get("retrieved") or []
     if retrieved:
-        with st.expander(f"Inspect all retrieved chunks ({len(retrieved)})"):
+        cited_ids = {s["chunk_id"] for s in sources}
+        with st.expander(f"Inspect all retrieved passages ({len(retrieved)})"):
+            st.caption("Everything the search returned for this question, including passages the answer did not use.")
             for r in retrieved:
-                cited = any(s["chunk_id"] == r["chunk_id"] for s in sources)
-                label = f"**{r['source_id']}** · {r['document']}" + (f" · p.{r['page']}" if r.get("page") else "")
-                label += f" · {r.get('section') or ''} · relevance {r['score']:.2f}" + (" · ✅ cited" if cited else "")
-                st.markdown(label)
+                mark = " · ✅ cited" if r["chunk_id"] in cited_ids else ""
+                st.markdown(f"**{escape(source_label(r))}** · relevance {r['score']:.2f}{mark}")
                 st.markdown(f"<div class='excerpt'>{escape(r['excerpt'])}</div>", unsafe_allow_html=True)
     if msg.get("meta"):
         st.caption(msg["meta"])
@@ -265,10 +346,24 @@ def render_message(msg: Dict, idx: int) -> None:
             return
         if msg["role"] == "assistant" and msg.get("found") is False:
             st.info(msg["content"])
+        elif msg["role"] == "assistant":
+            render_answer_text(msg)
         else:
             st.markdown(msg["content"])
         if msg["role"] == "assistant":
             render_sources(msg, f"m{idx}")
+
+
+def transcript_text(conv: Dict) -> str:
+    """Plain-text export that keeps each answer's verified sources."""
+    blocks = []
+    for m in conv["messages"]:
+        text = f"{m['role'].upper()}: {m['content']}"
+        if m["role"] == "assistant" and m.get("sources"):
+            refs = "\n".join(f"  [{s['number']}] {source_label(s)} ({s['source_id']})" for s in numbered_sources(m))
+            text += f"\nSOURCES:\n{refs}"
+        blocks.append(text)
+    return "\n\n".join(blocks)
 
 
 def page_assistant() -> None:
@@ -366,7 +461,7 @@ def page_history() -> None:
                         f"{n} question{'s' if n != 1 else ''}</span>", unsafe_allow_html=True)
             c2.button("Open", key=f"open-{conv['id']}", use_container_width=True,
                       on_click=open_conversation, args=(conv["id"],))
-            transcript = "\n\n".join(f"{m['role'].upper()}: {m['content']}" for m in conv["messages"])
+            transcript = transcript_text(conv)
             c3.download_button("Export", transcript, file_name=f"chat-{conv['id']}.txt", key=f"dl-{conv['id']}",
                                use_container_width=True)
             if c4.button("Delete", key=f"del-{conv['id']}", use_container_width=True):

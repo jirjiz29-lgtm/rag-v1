@@ -50,6 +50,11 @@ The frontend never sees the Anthropic API key. It only calls the backend's REST 
 3. **Hard fallback**: if nothing relevant is left, the bot returns the fallback message **without calling the LLM**.
 4. **Grounded generation**: chunks are sent to the LLM as `<source id="S1" document=… page=… section=…>` blocks under a strict system prompt (answer only from sources, cite `[S#]`, flag conflicts, never invent policies). Structured outputs force a JSON reply: `answer`, `found_in_documents`, `cited_sources`, `conflicts`.
 5. **Citation validation**: every cited id is checked against what was actually retrieved. Unknown ids (`[S99]`) are stripped. An answer with no valid citation, or one the model marks as not found, is replaced with the exact fallback message. **Fake citations can't reach the user.**
+6. **Citation building** (`citations.py`): the model only ever cites `[S#]`. Document name, page, section and excerpt are then copied from the chunk's stored metadata, never from the model's text:
+   - **Page** is shown only for PDFs and only if it lies within the document's page count. DOCX, TXT and Markdown have no fixed pages, so the citation says so instead of guessing.
+   - **Section** is the nearest heading found at indexing time. Text before the first heading is labelled as such rather than given an invented heading.
+   - **Highlighted excerpt**: the sentences in the passage that best match the answer's claims are marked. They are verbatim substrings of the passage.
+   - **Page references in the model's prose** such as "(page 7)" are removed unless a retrieved passage is on that page.
 6. **Response**: the answer, cited sources (document, page, section, excerpt, relevance), all retrieved chunks for inspection, and any detected conflicts.
 
 Fallback message (exact):
@@ -178,8 +183,8 @@ This copies 6 files into `knowledge_base/`. They're indexed automatically when t
 
 ## 7. Using the dashboard
 
-- **AI Knowledge Assistant**: ask questions. Under each answer you get **Sources** (document · page · section, with relevance and excerpt), **Inspect all retrieved chunks**, and a **Conflicting information** warning when documents disagree. **Search scope** limits a question to chosen categories or documents. **Clear chat** resets the conversation.
-- **Chat History**: reopen, export (.txt) or delete past conversations. They're saved in `data/chat_history.json`.
+- **AI Knowledge Assistant**: ask questions. Inline citations appear as numbers `[1]`, `[2]`; hover one to see its document, page and section. Under each answer, **Sources** lists one expandable entry per cited passage. Each entry has a details table (document, page or why there is none, section, category, passage position, relevance, upload date), the passage with its supporting sentences highlighted, and a **Show surrounding text** toggle that loads the passages before and after it. **Inspect all retrieved passages** shows everything the search returned, with cited ones marked. You also get a **Conflicting information** warning when documents disagree. **Search scope** limits a question to chosen categories or documents. **Clear chat** resets the conversation.
+- **Chat History**: reopen, export (.txt, including each answer's sources) or delete past conversations. They're saved in `data/chat_history.json`.
 - **Knowledge Base**: totals (documents, chunks, failures), a table of documents with status, chunks, pages, version, upload and update dates; inspect a document's chunks, re-index one or all, delete (with confirmation), and sync the folder.
 - **Upload Documents**: pick multiple PDF/DOCX/TXT/MD files and a category. You get a result per file: Indexed, Updated, Duplicate (skipped), Failed (e.g. a scanned PDF with no text), or Rejected (wrong type, too large, empty). A data-handling notice reminds users to follow company data policy.
 - **System Settings**: model/effort/key status, indexing configuration, per-session top-k and relevance threshold. The dark/light theme switch is in the sidebar.
@@ -221,7 +226,7 @@ The fictional "Brightpath Solutions" files in `sample_documents/` are only test 
 .venv/bin/python -m pytest -v
 ```
 
-The offline suite (54 tests) uses real document parsing, real embeddings and a real Chroma store. A deterministic `FakeLLM` stands in for the model, so no API key or network is needed after the embedding model is cached. It covers the required scenarios:
+The offline suite (75 tests) uses real document parsing, real embeddings and a real Chroma store. A deterministic `FakeLLM` stands in for the model, so no API key or network is needed after the embedding model is cached. It covers the required scenarios:
 
 | Requirement | Tests |
 |---|---|
@@ -235,12 +240,20 @@ The offline suite (54 tests) uses real document parsing, real embeddings and a r
 | Markdown support | `test_markdown_sections_and_code_fences` (nested heading paths, code fences ignored, indexed and retrieved) |
 | Validation & security | unsupported/empty/fake-PDF uploads, path traversal, key value never returned by `/health` or `/settings`, missing-key error |
 | Gemini client | request shape (system instruction, JSON schema, role mapping), fallback to the next model on 429/503/504, no fallback on auth/404 errors, error mapping, blocked/truncated/unreadable responses |
+| Citations | `tests/test_citations.py`: every citation field equals the stored chunk metadata (PDF, DOCX, TXT), exact PDF page and section, no page numbers for non-paged formats, out-of-range pages rejected, invented `(page N)` and `[S#]` references removed, highlights verbatim, heading lines never highlighted |
 | Claude client | exact request shape (model, adaptive thinking, effort, JSON schema, prompt caching, fallbacks beta) and error mapping, via the real SDK against a mocked HTTP transport |
 
 **Live LLM tests** (`tests/test_live_llm.py`) run against the configured provider, only when its key is set. They check a cited answer, step-by-step instructions, the fallback for an uncovered question, and conflict detection on the meal-allowance discrepancy:
 
 ```bash
 .venv/bin/python -m pytest tests/test_live_llm.py -v
+```
+
+**Citation audit** (`scripts/audit_citations.py`) asks real cross-document questions through the configured LLM. It then checks each citation against the vector store independently: the passage exists, and its document name, page, section, excerpt and highlights match what is stored. It prints every citation with ✓ or the problem found, and exits non-zero if any check fails:
+
+```bash
+.venv/bin/python scripts/audit_citations.py            # your knowledge base
+.venv/bin/python scripts/audit_citations.py --samples  # sample PDF/DOCX/TXT files (exercises page numbers)
 ```
 
 ## 9. Security & reliability

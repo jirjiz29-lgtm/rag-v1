@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Protocol, Sequence
 import anthropic
 
 from config import Settings
+from backend.citations import claims_for, highlight_sentences, scrub_page_mentions
 from backend.prompts import ANSWER_SCHEMA, FALLBACK_MESSAGE, SYSTEM_PROMPT, build_user_message
 from backend.retriever import RetrievedChunk, Retriever, process_query
 
@@ -214,5 +215,14 @@ class RAGPipeline:
                     "sources": ids,
                     "documents": sorted({by_id[s].document for s in ids}),
                 })
+        # Strip "(page N)" style references in the prose that no retrieved chunk supports.
+        answer = scrub_page_mentions(answer, {c.page for c in chunks if c.page})
+
         ordered = sorted(set(cited), key=lambda s: int(s[1:]))
-        return RAGAnswer(answer, True, sources=[by_id[s].to_dict() for s in ordered], conflicts=conflicts)
+        sources = []
+        for number, sid in enumerate(ordered, start=1):
+            source = by_id[sid].to_dict()
+            source["number"] = number  # display label: [S3] in the answer is shown as [1], [2]...
+            source["highlights"] = highlight_sentences(by_id[sid].text, claims_for(answer, sid), heading=by_id[sid].section)
+            sources.append(source)
+        return RAGAnswer(answer, True, sources=sources, conflicts=conflicts)

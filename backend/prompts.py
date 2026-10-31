@@ -19,7 +19,10 @@ How to answer:
 facts such as policies, procedures, limits, deadlines, names, or numbers. Never invent policies, procedures, \
 or citations.
 - Cite the sources that support each statement inline with their ids in square brackets, e.g. [S1] or [S2][S4]. \
-Only cite ids that appear in <sources>.
+Only cite ids that appear in <sources>. \
+Do not write page numbers or section numbers as references in the answer text; the system attaches the \
+verified document, page and section for each [S#] from the index itself. When you name a document (e.g. when \
+comparing), use its exact document name from <sources>.
 - If the sources do not contain enough information to answer, set "found_in_documents" to false and set \
 "answer" to exactly: "{FALLBACK_MESSAGE}"
 - If the sources only partly answer the question, answer the part they support and say plainly which part \
@@ -66,7 +69,7 @@ def format_sources(chunks: List[RetrievedChunk]) -> str:
     parts = []
     for c in chunks:
         attrs = [f'id="{c.source_id}"', f'document="{escape(c.document)}"']
-        if c.page:
+        if c.page:  # only real, validated PDF page numbers
             attrs.append(f'page="{c.page}"')
         if c.section:
             attrs.append(f'section="{escape(c.section)}"')
