@@ -185,7 +185,7 @@ Community Cloud runs only `streamlit run app.py`; there is no separate API serve
 1. Push the repo to GitHub (done: `jirjiz29-lgtm/rag-v1`).
 2. Go to <https://share.streamlit.io>, choose **Create app → Deploy a public app from GitHub**, and set:
    - Repository `jirjiz29-lgtm/rag-v1`, branch `main`, main file path `app.py`
-   - **Advanced settings → Python version: 3.12.** `requirements.txt` installs CPU-only PyTorch for Linux + Python 3.12. Other versions fall back to the multi-GB GPU build.
+   - **Python version:** any of 3.11–3.15 (the default is fine). On Linux `requirements.txt` installs the CPU-only PyTorch build for these versions, avoiding ~3 GB of NVIDIA GPU libraries Streamlit Cloud can't use.
    - **Advanced settings → Secrets** (TOML). Top-level secrets become environment variables, which `config.py` reads:
      ```toml
      LLM_PROVIDER = "gemini"

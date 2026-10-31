@@ -35,6 +35,11 @@ pytest>=9.2,<10
 httpx>=0.28,<1
 reportlab>=5.1,<6
 
-# CPU-only PyTorch on Linux x86_64 with Python 3.12 (e.g. Streamlit Community Cloud, which has no GPU;
-# the default PyPI build pulls ~3 GB of NVIDIA libraries). Other platforms get torch from PyPI as usual.
+# CPU-only PyTorch on Linux x86_64 (e.g. Streamlit Community Cloud, which has no GPU; the default PyPI
+# build pulls ~3 GB of NVIDIA libraries). One line per Python version Streamlit Cloud may run.
+# Other platforms get torch from PyPI as usual.
+torch @ https://download.pytorch.org/whl/cpu/torch-2.15.0%2Bcpu-cp311-cp311-manylinux_2_28_x86_64.whl ; sys_platform == "linux" and platform_machine == "x86_64" and python_version == "3.11"
 torch @ https://download.pytorch.org/whl/cpu/torch-2.15.0%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl ; sys_platform == "linux" and platform_machine == "x86_64" and python_version == "3.12"
+torch @ https://download.pytorch.org/whl/cpu/torch-2.15.0%2Bcpu-cp313-cp313-manylinux_2_28_x86_64.whl ; sys_platform == "linux" and platform_machine == "x86_64" and python_version == "3.13"
+torch @ https://download.pytorch.org/whl/cpu/torch-2.15.0%2Bcpu-cp314-cp314-manylinux_2_28_x86_64.whl ; sys_platform == "linux" and platform_machine == "x86_64" and python_version == "3.14"
+torch @ https://download.pytorch.org/whl/cpu/torch-2.15.0%2Bcpu-cp315-cp315-manylinux_2_28_x86_64.whl ; sys_platform == "linux" and platform_machine == "x86_64" and python_version == "3.15"
