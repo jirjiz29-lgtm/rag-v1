@@ -1,0 +1,36 @@
+# Python 3.10+ required (tested on 3.12)
+
+# LLM (Gemini by default; Claude optional via LLM_PROVIDER=anthropic)
+google-genai>=2.34,<3
+anthropic>=2.3,<3
+
+# RAG framework (LangChain)
+langchain-core>=1.7,<2
+langchain-text-splitters>=1.1,<2
+langchain-chroma>=1.1,<2
+langchain-huggingface>=1.2,<2
+
+# Vector DB + embeddings
+chromadb>=1.5,<2
+sentence-transformers>=6.2,<7
+
+# Backend
+fastapi>=0.162,<1
+uvicorn[standard]>=0.54,<1
+python-multipart>=0.0.32
+
+# Frontend
+streamlit>=1.66,<2
+requests>=2.34,<3
+
+# Document processing
+pypdf>=6.21,<7
+python-docx>=1.2,<2
+
+# Config
+python-dotenv>=1.2,<2
+
+# Testing & sample document generation
+pytest>=9.2,<10
+httpx>=0.28,<1
+reportlab>=5.1,<6

@@ -1,0 +1,20 @@
+CUSTOMER SUPPORT GUIDELINES
+Brightpath Solutions Customer Support Team. Owner: Head of Customer Support.
+
+TICKET PRIORITIES
+P1 - Critical: service is down for all users. First response within 1 hour, 24/7.
+P2 - High: major feature broken with no workaround. First response within 4 business hours.
+P3 - Normal: issue with a workaround or a general question. First response within 1 business day.
+
+ESCALATION PROCESS
+1. If a P1 ticket is not acknowledged within 30 minutes, page the on-call support engineer.
+2. If a P1 is not resolved within 4 hours, escalate to the Head of Customer Support.
+3. The Head of Customer Support notifies the customer's account manager and posts updates every 60 minutes.
+
+COMMUNICATION STANDARDS
+Address customers by name and use a friendly, professional tone.
+Never share internal ticket notes or other customers' information.
+Close a ticket only after the customer confirms the issue is resolved, or after 5 business days without a reply.
+
+REFUNDS
+Support agents may approve refunds up to $200. Larger refunds require Support Manager approval.
