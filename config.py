@@ -99,6 +99,10 @@ class Settings:
     vectorstore_dir: Path = field(default_factory=lambda: _env_path("VECTORSTORE_DIR", BASE_DIR / "vectorstore"))
     collection_name: str = field(default_factory=lambda: os.getenv("CHROMA_COLLECTION", "company_knowledge"))
 
+    # Fixed knowledge base: documents come only from knowledge_base/ (indexed at startup); the API
+    # refuses uploads, deletes and re-indexing. Set KB_READ_ONLY=false to manage documents from the UI.
+    kb_read_only: bool = field(default_factory=lambda: _env_bool("KB_READ_ONLY", True))
+
     # Upload validation
     max_upload_mb: int = field(default_factory=lambda: _env_int("MAX_UPLOAD_MB", 25))
 
@@ -106,6 +110,11 @@ class Settings:
     api_host: str = field(default_factory=lambda: os.getenv("API_HOST", "127.0.0.1"))
     api_port: int = field(default_factory=lambda: _env_int("API_PORT", 8000))
     backend_url: str = field(default_factory=lambda: os.getenv("BACKEND_URL", "http://127.0.0.1:8000"))
+
+    @property
+    def categories_path(self) -> Path:
+        """Optional {"filename": "Category"} map for documents in the knowledge_base folder."""
+        return self.knowledge_base_dir / "categories.json"
 
     @property
     def registry_path(self) -> Path:

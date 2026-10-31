@@ -2,6 +2,8 @@
 
 An internal RAG chatbot that answers employee questions from company documents (policies, SOPs, handbooks, training material), with source citations on every answer. When the documents don't contain the answer, it says so instead of guessing.
 
+It answers from a **fixed knowledge base**: the 10 GypsyCircle documents in `knowledge_base/`. They're committed with the code and indexed automatically when the app starts. There's no upload option, and the API refuses uploads, deletes and re-indexing (`KB_READ_ONLY=true`).
+
 - **LLM:** Google Gemini (`gemini-3.8-flash`, falling back to `gemini-3.5-flash-lite` when overloaded) through the official `google-genai` SDK. Anthropic Claude (`claude-opus-5-5`, official `anthropic` SDK) is still supported: set `LLM_PROVIDER=anthropic`.
 - **RAG framework:** LangChain (`langchain-core`, `langchain-text-splitters`, `langchain-chroma`, `langchain-huggingface`)
 - **Vector DB:** ChromaDB, persisted locally in `vectorstore/`
@@ -72,7 +74,7 @@ company-knowledge-bot/
 ├── start.sh                    # Starts backend + frontend together
 ├── requirements.txt  .env.example  .gitignore  pytest.ini
 ├── .streamlit/config.toml
-├── knowledge_base/             # Uploaded source documents (synced on startup)
+├── knowledge_base/             # The fixed GypsyCircle documents + categories.json (indexed on startup)
 ├── vectorstore/                # ChromaDB data + document_registry.json (created at runtime)
 ├── data/chat_history.json      # Saved conversations (created at runtime)
 ├── sample_documents/           # Fictional sample docs for demos/tests
@@ -143,7 +145,8 @@ Then set the key for your provider: `GEMINI_API_KEY` (default) or `ANTHROPIC_API
 | `TOP_K` | `6` | Chunks retrieved per question |
 | `RELEVANCE_THRESHOLD` | `0.25` | Minimum cosine relevance (0–1) to count as evidence |
 | `HISTORY_TURNS` | `6` | Previous Q&A turns sent for follow-up context |
-| `MAX_UPLOAD_MB` | `25` | Per-file upload limit |
+| `KB_READ_ONLY` | `true` | Fixed knowledge base: no uploads, deletes or re-indexing (API returns 403; UI hides them) |
+| `MAX_UPLOAD_MB` | `25` | Per-file upload limit (only used when `KB_READ_ONLY=false`) |
 | `KNOWLEDGE_BASE_DIR` / `VECTORSTORE_DIR` | `knowledge_base` / `vectorstore` | Storage locations |
 | `API_HOST` / `API_PORT` / `BACKEND_URL` | `127.0.0.1` / `8000` / `http://127.0.0.1:8000` | Server addresses |
 
@@ -173,13 +176,7 @@ Or separately, in two terminals:
 
 Open http://localhost:8501. API docs are at http://127.0.0.1:8000/docs.
 
-**Load the sample documents** (a fictional company, "Brightpath Solutions"):
-
-```bash
-.venv/bin/python scripts/generate_sample_docs.py --install
-```
-
-This copies 6 files into `knowledge_base/`. They're indexed automatically when the API starts, or immediately with **Sync folder** on the Knowledge Base page.
+The knowledge base is indexed on startup, so there's nothing to load. The fictional "Brightpath Solutions" files in `sample_documents/` are only test fixtures; don't copy them into `knowledge_base/`.
 
 ### Deploying to Streamlit Community Cloud
 
@@ -201,8 +198,8 @@ Community Cloud runs only `streamlit run app.py`; there is no separate API serve
 3. Deploy. The first start downloads the embedding model and indexes `knowledge_base/`, so it takes a minute or two.
 
 Things to know before putting company documents on Community Cloud:
-- **The knowledge base starts empty.** `knowledge_base/` is git-ignored, so your documents aren't in the repo. Upload them on the **Upload Documents** page after deploying.
-- **Storage is temporary.** Uploads and the index live on the container's disk and are lost when the app restarts, sleeps or redeploys. You then upload again. For permanent storage, either commit the documents to a *private* repo (remove `knowledge_base/*` from `.gitignore`; they are indexed automatically on start), or host the app where disk persists.
+- **The documents ship with the code.** `knowledge_base/` is committed, so every start (including after the app sleeps or restarts) re-indexes the same 10 documents automatically. Nothing needs uploading.
+- **The repo must be private to keep the documents private.** On a public GitHub repo, anyone can read `knowledge_base/` directly.
 - **Apps are public by default.** Anyone with the URL could ask questions about your documents. In the app's **Settings → Sharing**, restrict who can view it, and follow your company's data policy.
 
 **"The app's code is not connected to a remote GitHub repository"** (from the local **Deploy** button): Streamlit checks the git repo of the folder it was started from, so it only sees a repo and remote that already existed when the server started. Restart `streamlit run app.py` from the repo folder after pushing, or skip the button and create the app directly at share.streamlit.io as above.
@@ -211,8 +208,8 @@ Things to know before putting company documents on Community Cloud:
 
 - **AI Knowledge Assistant**: ask questions. Inline citations appear as numbers `[1]`, `[2]`; hover one to see its document, page and section. Under each answer, **Sources** lists one expandable entry per cited passage. Each entry has a details table (document, page or why there is none, section, category, passage position, relevance, upload date), the passage with its supporting sentences highlighted, and a **Show surrounding text** toggle that loads the passages before and after it. **Inspect all retrieved passages** shows everything the search returned, with cited ones marked. You also get a **Conflicting information** warning when documents disagree. **Search scope** limits a question to chosen categories or documents. **Clear chat** resets the conversation.
 - **Chat History**: reopen, export (.txt, including each answer's sources) or delete past conversations. They're saved in `data/chat_history.json`.
-- **Knowledge Base**: totals (documents, chunks, failures), a table of documents with status, chunks, pages, version, upload and update dates; inspect a document's chunks, re-index one or all, delete (with confirmation), and sync the folder.
-- **Upload Documents**: pick multiple PDF/DOCX/TXT/MD files and a category. You get a result per file: Indexed, Updated, Duplicate (skipped), Failed (e.g. a scanned PDF with no text), or Rejected (wrong type, too large, empty). A data-handling notice reminds users to follow company data policy.
+- **Knowledge Base**: totals (documents, chunks, failures), a table of the fixed documents with category, status, chunks and size, and a viewer for each document's indexed passages.
+- **Upload Documents** (only when `KB_READ_ONLY=false`): pick multiple PDF/DOCX/TXT/MD files and a category. You get a result per file: Indexed, Updated, Duplicate (skipped), Failed (e.g. a scanned PDF with no text), or Rejected (wrong type, too large, empty). A data-handling notice reminds users to follow company data policy.
 - **System Settings**: model/effort/key status, indexing configuration, per-session top-k and relevance threshold. The dark/light theme switch is in the sidebar.
 
 Questions that work well with the samples:
@@ -236,15 +233,16 @@ Questions that work well with the samples:
 | DELETE | `/documents/{id}` | Remove file, chunks and registry entry |
 | POST | `/documents/{id}/reindex` · `/documents/reindex` · `/documents/sync` | Re-index one · all · scan folder |
 
-### Loading the GypsyCircle knowledge base
+### The fixed knowledge base
 
-The live `knowledge_base/` holds the 10 GypsyCircle Markdown documents from `GypsyCircle_RAG_Knowledge_Base.zip`, each filed under a matching category (Employee Handbook, Customer Support, Sales and so on). To reload them, start the API and upload the `.md` files on the **Upload Documents** page, or with `curl`:
+`knowledge_base/` holds the 10 GypsyCircle Markdown documents. `knowledge_base/categories.json` assigns each one a category (Employee Handbook, Customer Support, Sales and so on), which the dashboard's **Search scope** filter uses.
 
-```bash
-curl -X POST localhost:8000/documents/upload -F category=Sales -F files=@06_Sales_and_Lead_Management_SOP.md
-```
+On every start the app compares the folder with the index. New or changed files are indexed, with a changed file getting a new version. Files that were removed are dropped from the index. To change what the assistant knows:
 
-The fictional "Brightpath Solutions" files in `sample_documents/` are only test fixtures. Keep them out of the live knowledge base so they don't mix with GypsyCircle answers.
+1. Add, edit or delete files in `knowledge_base/` (PDF, DOCX, TXT or MD) and update `categories.json`.
+2. Restart the app. On Streamlit Community Cloud, commit and push; the app redeploys and re-indexes.
+
+While `KB_READ_ONLY=true` (the default), the write endpoints (`/documents/upload`, `DELETE /documents/{id}`, `/reindex`, `/sync`) return **403**, and the dashboard hides the Upload page and the management buttons. Set `KB_READ_ONLY=false` to bring back upload, delete and re-index for local administration.
 
 ## 8. Testing
 
@@ -252,7 +250,7 @@ The fictional "Brightpath Solutions" files in `sample_documents/` are only test 
 .venv/bin/python -m pytest -v
 ```
 
-The offline suite (77 tests) uses real document parsing, real embeddings and a real Chroma store. A deterministic `FakeLLM` stands in for the model, so no API key or network is needed after the embedding model is cached. It covers the required scenarios:
+The offline suite (81 tests) uses real document parsing, real embeddings and a real Chroma store. A deterministic `FakeLLM` stands in for the model, so no API key or network is needed after the embedding model is cached. It covers the required scenarios:
 
 | Requirement | Tests |
 |---|---|
@@ -267,6 +265,7 @@ The offline suite (77 tests) uses real document parsing, real embeddings and a r
 | Validation & security | unsupported/empty/fake-PDF uploads, path traversal, key value never returned by `/health` or `/settings`, missing-key error |
 | Gemini client | request shape (system instruction, JSON schema, role mapping), fallback to the next model on 429/503/504, no fallback on auth/404 errors, error mapping, blocked/truncated/unreadable responses |
 | Embedded mode | `tests/test_embedded.py`: the dashboard's client drives upload, chat with citations, chunk inspection, delete and error reporting in-process |
+| Fixed knowledge base | `tests/test_fixed_kb.py`: all 10 documents present and categorised, indexed at startup with their categories, every write endpoint returns 403, editing or removing a file updates the index on restart |
 | Citations | `tests/test_citations.py`: every citation field equals the stored chunk metadata (PDF, DOCX, TXT), exact PDF page and section, no page numbers for non-paged formats, out-of-range pages rejected, invented `(page N)` and `[S#]` references removed, highlights verbatim, heading lines never highlighted |
 | Claude client | exact request shape (model, adaptive thinking, effort, JSON schema, prompt caching, fallbacks beta) and error mapping, via the real SDK against a mocked HTTP transport |
 

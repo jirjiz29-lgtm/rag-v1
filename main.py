@@ -8,7 +8,7 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Dict, List, Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -53,6 +53,11 @@ def create_app(settings: Optional[Settings] = None, llm: Optional[LLMClient] = N
     def svc(request: Request) -> Services:
         return request.app.state.services
 
+    def require_writable() -> None:
+        if settings.kb_read_only:
+            raise HTTPException(status_code=403, detail="The knowledge base is fixed (read-only). "
+                                "Change the files in knowledge_base/ and restart to update it.")
+
     @app.exception_handler(LLMError)
     async def llm_error_handler(_: Request, exc: LLMError):
         return JSONResponse(status_code=exc.status_code, content={"detail": str(exc)})
@@ -93,6 +98,7 @@ def create_app(settings: Optional[Settings] = None, llm: Optional[LLMClient] = N
             "categories": DOCUMENT_CATEGORIES,
             "llm_configured": settings.llm_configured,
             "api_key_warning": settings.api_key_warning,
+            "kb_read_only": settings.kb_read_only,
         }
 
     @app.post("/chat")
@@ -118,7 +124,7 @@ def create_app(settings: Optional[Settings] = None, llm: Optional[LLMClient] = N
     def stats(request: Request) -> Dict:
         return svc(request).knowledge_base.stats()
 
-    @app.post("/documents/upload")
+    @app.post("/documents/upload", dependencies=[Depends(require_writable)])
     async def upload_documents(
         request: Request,
         files: List[UploadFile] = File(...),
@@ -153,24 +159,24 @@ def create_app(settings: Optional[Settings] = None, llm: Optional[LLMClient] = N
             raise HTTPException(status_code=404, detail="Document not found.")
         return {"doc_id": doc_id, "chunks": s.vector_db.get_document_chunks(doc_id)}
 
-    @app.delete("/documents/{doc_id}")
+    @app.delete("/documents/{doc_id}", dependencies=[Depends(require_writable)])
     def delete_document(doc_id: str, request: Request) -> Dict:
         if not svc(request).knowledge_base.delete_document(doc_id):
             raise HTTPException(status_code=404, detail="Document not found.")
         return {"status": "deleted", "doc_id": doc_id}
 
-    @app.post("/documents/{doc_id}/reindex")
+    @app.post("/documents/{doc_id}/reindex", dependencies=[Depends(require_writable)])
     def reindex_document(doc_id: str, request: Request) -> Dict:
         try:
             return svc(request).knowledge_base.reindex_document(doc_id)
         except KeyError:
             raise HTTPException(status_code=404, detail="Document not found.")
 
-    @app.post("/documents/reindex")
+    @app.post("/documents/reindex", dependencies=[Depends(require_writable)])
     def reindex_all(request: Request) -> Dict:
         return {"results": svc(request).knowledge_base.reindex_all()}
 
-    @app.post("/documents/sync")
+    @app.post("/documents/sync", dependencies=[Depends(require_writable)])
     def sync_folder(request: Request) -> Dict:
         return {"results": svc(request).knowledge_base.sync_folder()}
 

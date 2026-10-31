@@ -33,7 +33,7 @@ NAV = [
 
 DATA_POLICY_WARNING = (
     "**Data handling notice:** uploaded files are stored and indexed on this server, and relevant excerpts are "
-    "sent to the Anthropic API to generate answers. Only upload documents you are authorised to share, and "
+    "sent to the configured AI provider to generate answers. Only upload documents you are authorised to share, and "
     "handle them according to your company's data classification and retention policies. Do not upload "
     "personal data, credentials, or regulated information unless your policies permit it."
 )
@@ -127,6 +127,11 @@ def cached_settings() -> Optional[Dict]:
         return None
 
 
+def kb_read_only() -> bool:
+    """Fixed knowledge base: no uploads or document management in the UI (the API refuses them too)."""
+    return bool((cached_settings() or {}).get("kb_read_only", True))
+
+
 @st.cache_data(ttl=5, show_spinner=False)
 def cached_documents() -> List[Dict]:
     try:
@@ -217,7 +222,9 @@ def sidebar() -> None:
             "<div class='brand-sub'>Company knowledge, grounded answers</div></div></div>",
             unsafe_allow_html=True,
         )
-        labels = dict(NAV)
+        labels = {k: v for k, v in NAV if not (k == "upload" and kb_read_only())}
+        if st.session_state.get("page") not in labels:
+            st.session_state.page = "assistant"
         st.radio("Navigation", list(labels), format_func=labels.get, key="page", label_visibility="collapsed")
 
         st.divider()
@@ -406,8 +413,9 @@ def page_assistant() -> None:
 
     if not conv["messages"]:
         if not docs:
-            st.markdown("<div class='empty'>📭 The knowledge base is empty.<br>Go to <b>Upload Documents</b> to add "
-                        "policies, SOPs or handbooks.</div>", unsafe_allow_html=True)
+            hint = ("Add documents to the <code>knowledge_base/</code> folder and restart the app." if kb_read_only()
+                    else "Go to <b>Upload Documents</b> to add policies, SOPs or handbooks.")
+            st.markdown(f"<div class='empty'>📭 The knowledge base is empty.<br>{hint}</div>", unsafe_allow_html=True)
         else:
             st.markdown(f"<div class='empty'>Ask anything about the {len(docs)} indexed company documents.</div>",
                         unsafe_allow_html=True)
@@ -493,7 +501,9 @@ STATUS_BADGE = {"indexed": "✅ Indexed", "failed": "❌ Failed", "processing": 
 
 
 def page_knowledge_base() -> None:
-    page_header("Knowledge Base", "Manage indexed documents, inspect chunks and re-index.")
+    read_only = kb_read_only()
+    page_header("Knowledge Base", "The fixed set of company documents this assistant answers from. Inspect their indexed passages."
+                if read_only else "Manage indexed documents, inspect chunks and re-index.")
     try:
         stats = api().stats()
     except APIError as exc:
@@ -507,8 +517,9 @@ def page_knowledge_base() -> None:
 
     docs = cached_documents()
     if not docs:
-        st.markdown("<div class='empty'>No documents yet. Use <b>Upload Documents</b> to add some.</div>",
-                    unsafe_allow_html=True)
+        hint = ("Add documents to the <code>knowledge_base/</code> folder and restart the app." if read_only
+                else "Use <b>Upload Documents</b> to add some.")
+        st.markdown(f"<div class='empty'>No documents yet. {hint}</div>", unsafe_allow_html=True)
         return
 
     st.write("")
@@ -521,17 +532,24 @@ def page_knowledge_base() -> None:
             "Pages": d.get("pages") or "—",
             "Version": d.get("version", 1),
             "Size (KB)": round(d.get("size_bytes", 0) / 1024, 1),
-            "Uploaded": (d.get("uploaded_at") or "")[:16].replace("T", " "),
+            ("Indexed" if read_only else "Uploaded"): (d.get("uploaded_at") or "")[:16].replace("T", " "),
             "Updated": (d.get("updated_at") or "")[:16].replace("T", " "),
             "Notes": d.get("error") or "",
         }
         for d in docs
     ]
+    if read_only:
+        for r in rows:
+            r.pop("Version"), r.pop("Updated")
     # Plain HTML table so it follows the light/dark theme (st.dataframe draws on a canvas).
     head = "".join(f"<th>{escape(k)}</th>" for k in rows[0])
     body = "".join("<tr>" + "".join(f"<td>{escape(str(v))}</td>" for v in r.values()) + "</tr>" for r in rows)
     st.markdown(f"<div class='doc-table'><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>",
                 unsafe_allow_html=True)
+
+    if read_only:
+        render_document_inspector(docs, read_only=True)
+        return
 
     a1, a2, _ = st.columns([1.8, 1.8, 3])
     if a1.button("🔄 Re-index all", use_container_width=True):
@@ -550,7 +568,10 @@ def page_knowledge_base() -> None:
             except APIError as exc:
                 st.error(str(exc))
         refresh_data()
+    render_document_inspector(docs, read_only=False)
 
+
+def render_document_inspector(docs: List[Dict], read_only: bool) -> None:
     st.subheader("Document details")
     names = {d["filename"]: d for d in docs}
     selected = st.selectbox("Select a document", list(names))
@@ -558,7 +579,7 @@ def page_knowledge_base() -> None:
     c1, c2, c3 = st.columns(3)
     if c1.button("Inspect chunks", use_container_width=True):
         st.session_state.inspect = doc["doc_id"]
-    if c2.button("Re-index", use_container_width=True):
+    if not read_only and c2.button("Re-index", use_container_width=True):
         with st.spinner(f"Re-indexing {selected}…"):
             try:
                 res = api().reindex(doc["doc_id"])
@@ -566,8 +587,8 @@ def page_knowledge_base() -> None:
             except APIError as exc:
                 st.error(str(exc))
         refresh_data()
-    confirm = c3.checkbox("Confirm delete", key=f"confirm-{doc['doc_id']}")
-    if c3.button("Delete document", type="primary", disabled=not confirm, use_container_width=True):
+    confirm = False if read_only else c3.checkbox("Confirm delete", key=f"confirm-{doc['doc_id']}")
+    if not read_only and c3.button("Delete document", type="primary", disabled=not confirm, use_container_width=True):
         try:
             api().delete(doc["doc_id"])
             st.success(f"Deleted {selected} and removed its chunks from the index.")
@@ -646,8 +667,13 @@ def page_settings() -> None:
         st.markdown("**Indexing**")
         st.write(f"Embeddings: `{settings['embedding_model']}`")
         st.write(f"Chunk size / overlap: `{settings['chunk_size']}` / `{settings['chunk_overlap']}` characters")
-        st.write(f"Supported types: {', '.join(settings['supported_extensions'])} · max {settings['max_upload_mb']} MB")
-        st.caption("Change these in `.env`, restart the API, then use Re-index all.")
+        if settings.get("kb_read_only", True):
+            st.write("Knowledge base: fixed (read-only), loaded from `knowledge_base/`")
+        else:
+            st.write(f"Supported types: {', '.join(settings['supported_extensions'])} · max {settings['max_upload_mb']} MB")
+        st.caption("Change these in `.env` and restart. With the fixed knowledge base, delete the `vectorstore/` "
+                   "folder first so every document is re-indexed with the new settings."
+                   if settings.get("kb_read_only", True) else "Change these in `.env`, restart the API, then use Re-index all.")
 
     st.subheader("Retrieval (this session)")
     top_k = st.slider("Chunks to retrieve (top-k)", 1, 20, st.session_state.top_k or settings["top_k"])
@@ -674,4 +700,7 @@ def main() -> None:
     init_state()
     inject_css("dark" if st.session_state.dark_mode else "light")
     sidebar()
-    PAGES[st.session_state.page]()
+    page = st.session_state.page
+    if page == "upload" and kb_read_only():
+        page = "assistant"
+    PAGES[page]()

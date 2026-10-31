@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
 import shutil
@@ -222,11 +223,20 @@ class KnowledgeBaseManager:
                     data = path.read_bytes()
                     if record and record.get("sha256") == sha256_bytes(data) and record.get("status") == "indexed":
                         continue
-                    category = (record or {}).get("category", "General")
+                    category = self._folder_categories().get(name) or (record or {}).get("category", "General")
                     results.append(self.ingest_path(path, category))
                 except ValidationError as exc:
                     results.append({"status": "failed", "filename": name, "message": str(exc)})
         return results
+
+    def _folder_categories(self) -> Dict[str, str]:
+        path = self.settings.categories_path
+        try:
+            data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        except (OSError, ValueError):
+            logger.warning("Ignoring unreadable %s", path.name)
+            return {}
+        return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
 
     def list_documents(self) -> List[dict]:
         return self.registry.all()

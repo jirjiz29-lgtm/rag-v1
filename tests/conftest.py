@@ -65,6 +65,7 @@ def make_settings(tmp: Path, **overrides) -> Settings:
         chunk_overlap=150,
         top_k=6,
         relevance_threshold=0.25,
+        kb_read_only=False,  # most tests add and remove documents
     )
     base.update(overrides)
     return Settings(**base)

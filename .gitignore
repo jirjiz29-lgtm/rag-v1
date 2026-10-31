@@ -5,6 +5,4 @@ __pycache__/
 .pytest_cache/
 vectorstore/
 data/
-knowledge_base/*
-!knowledge_base/.gitkeep
 .DS_Store
