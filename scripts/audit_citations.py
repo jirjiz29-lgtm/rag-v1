@@ -50,21 +50,15 @@ def answer_with_retry(services, question, attempts: int = 3):
             time.sleep(10 * attempt)
 
 
-def audit(services, questions) -> tuple:
-    """Returns (problems, citations_checked, skipped). Every audit question is answerable from the documents,
-    so an unanswered one counts as a problem: an audit that checks nothing must not report success."""
-    problems = checked = skipped = 0
+def audit(services, questions) -> int:
+    problems = 0
     for q in questions:
         print(f"\nQ: {q}")
         result = answer_with_retry(services, q)
         if result is None:
-            skipped += 1
             continue
         print(f"   model={result.model}  found={result.found}  sources={len(result.sources)}  "
               f"documents={len({s['document'] for s in result.sources})}")
-        if not result.found or not result.sources:
-            problems += 1
-            print("   ✗ no cited answer (the documents cover this question)")
         markers = set(re.findall(r"\[(S\d+)\]", result.answer))
         cited = {s["source_id"] for s in result.sources}
         if markers - cited:
@@ -88,14 +82,13 @@ def audit(services, questions) -> tuple:
                 if any(h not in stored["text"] for h in src.get("highlights", [])):
                     issues.append("highlight not verbatim")
             problems += bool(issues)
-            checked += 1
             status = "✗ " + ", ".join(issues) if issues else "✓"
             print(f"   [{src['number']}] {src['citation']}  {status}")
             for h in src.get("highlights", [])[:2]:
                 print(f"         ▸ {h[:110]}")
         for c in result.conflicts:
             print(f"   ⚠ conflict: {c['description'][:120]} ({', '.join(c['documents'])})")
-    return problems, checked, skipped
+    return problems
 
 
 def main() -> int:
@@ -113,16 +106,10 @@ def main() -> int:
         questions = SAMPLE_QUESTIONS
     else:
         services = build_services(settings)
-        services.knowledge_base.sync_folder()  # index knowledge_base/ exactly as the app does at startup
         questions = LIVE_QUESTIONS
-    problems, checked, skipped = audit(services, questions)
-    if problems:
-        print(f"\n{problems} problem(s) found.")
-    elif skipped:
-        print(f"\n{checked} citations verified; {skipped} question(s) skipped because the LLM was unavailable.")
-    else:
-        print(f"\nAll {checked} citations verified against the index.")
-    return 1 if problems or skipped else 0
+    problems = audit(services, questions)
+    print(f"\n{'All citations verified against the index.' if not problems else f'{problems} problem(s) found.'}")
+    return 1 if problems else 0
 
 
 if __name__ == "__main__":

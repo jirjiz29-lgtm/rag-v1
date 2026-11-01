@@ -43,14 +43,13 @@ The frontend never sees the Anthropic API key. It only calls the backend's REST 
 1. **Validate**: extension (`.pdf/.docx/.txt/.md`), size limit, non-empty, PDF/DOCX file signature, sanitised filename (no path traversal).
 2. **Deduplicate**: a SHA-256 of the content is checked against the registry. Identical content is skipped, even under another filename. Uploading a *changed* file under the same name replaces the old version (old chunks are deleted and the version number goes up).
 3. **Extract** (`document_loader.py`): text is extracted per page (PDF) and split into sections using headings: DOCX heading styles, numbered headings (`3. Paid Time Off`), ALL-CAPS lines, and short Title Case lines. Markdown files are split only on `#` headings (outside code fences), and sub-sections get a path such as `4. Refunds > Partial refunds`. DOCX tables are kept in document order. Each piece carries `source`, `page`, `section`, `category` and `file_type` metadata.
-4. **Chunk** (`text_splitter.py`): sections are chunked separately (a chunk never mixes two headings), then capped at `CHUNK_SIZE` tokens with `CHUNK_OVERLAP`, counted with the embedding model's own tokenizer. The cap stays at or below MiniLM's 256-token input limit, because text past that limit is never embedded.
-5. **Embed and store** (`embeddings.py`, `vector_database.py`): normalised MiniLM vectors go into a cosine-space Chroma collection with stable chunk ids (`<doc_id>:<n>`). Each document's registry entry records the chunking/embedding settings it was indexed with. Changing them re-indexes unchanged files on the next start.
+4. **Chunk** (`text_splitter.py`): `RecursiveCharacterTextSplitter` with configurable `CHUNK_SIZE` and `CHUNK_OVERLAP`. Sections are chunked separately, so a chunk never mixes two headings.
+5. **Embed and store** (`embeddings.py`, `vector_database.py`): normalised MiniLM vectors go into a cosine-space Chroma collection with stable chunk ids (`<doc_id>:<n>`).
 
 **Answering** (`backend/retriever.py`, `backend/rag_pipeline.py`)
 1. **Query processing**: whitespace is normalised. Short follow-ups ("and after 4 hours?") are expanded with the previous question so retrieval has context.
-2. **Hybrid search** (`retriever.py`, `hybrid.py`): semantic search (embeddings) and BM25 keyword search (over each chunk prefixed with its document title and section heading) each return `CANDIDATE_POOL` chunks, fused by reciprocal rank. Optional **metadata filters** (category, specific documents) apply to both.
-3. **Reranking** (`reranker.py`): a cross-encoder (`RERANKER_MODEL`) reads the question with each candidate and re-orders them. Chunks scoring below `RERANK_KEEP_RATIO` × the best are dropped, and at most `TOP_K` are sent to the LLM.
-4. **Hard fallback**: if no chunk reaches `RELEVANCE_THRESHOLD` cosine similarity, the bot returns the fallback message **without calling the LLM**.
+2. **Semantic search**: top-k chunks are retrieved, with optional **metadata filters** (category, specific documents). Chunks below `RELEVANCE_THRESHOLD` are dropped.
+3. **Hard fallback**: if nothing relevant is left, the bot returns the fallback message **without calling the LLM**.
 4. **Grounded generation**: chunks are sent to the LLM as `<source id="S1" document=… page=… section=…>` blocks under a strict system prompt (answer only from sources, cite `[S#]`, flag conflicts, never invent policies). Structured outputs force a JSON reply: `answer`, `found_in_documents`, `cited_sources`, `conflicts`.
 5. **Citation validation**: every cited id is checked against what was actually retrieved. Unknown ids (`[S99]`) are stripped. An answer with no valid citation, or one the model marks as not found, is replaced with the exact fallback message. **Fake citations can't reach the user.**
 6. **Citation building** (`citations.py`): the model only ever cites `[S#]`. Document name, page, section and excerpt are then copied from the chunk's stored metadata, never from the model's text:
@@ -63,7 +62,7 @@ The frontend never sees the Anthropic API key. It only calls the backend's REST 
 Fallback message (exact):
 > I couldn't find reliable information about this in the company's knowledge base. Please consult the relevant department or upload the required documentation.
 
-**Note on the relevance threshold.** No retrieval score separates "answerable" from "not covered" on this knowledge base: the weakest answerable question scores 0.248 cosine and the strongest unanswerable one 0.396. The reranker scores correct paraphrase matches as low as off-topic ones. So the threshold (default 0.20) only filters clearly unrelated questions. For in-domain questions the documents can't answer, the model decides `found_in_documents=false`, and the live check returned the exact fallback for 10 of 10 such questions. Details are in [docs/RETRIEVAL_EVALUATION.md](docs/RETRIEVAL_EVALUATION.md).
+**Note on the relevance threshold.** MiniLM gives "company-sounding" questions that the documents don't cover (e.g. "parental leave policy") scores around 0.30, the same as weak true matches. So the threshold (default 0.25) only filters clearly unrelated questions. For in-domain questions the documents can't answer, the model decides `found_in_documents=false`. Raise the threshold in **System Settings** if you want stricter pre-filtering.
 
 ## 3. Project structure
 
@@ -142,13 +141,9 @@ Then set the key for your provider: `GEMINI_API_KEY` (default) or `ANTHROPIC_API
 | `CLAUDE_MODEL` | `claude-opus-5-5` | Claude model id |
 | `CLAUDE_EFFORT` | `medium` | `low`/`medium`/`high`/`xhigh`/`max`: answer thoroughness vs. latency/cost |
 | `CLAUDE_ENABLE_FALLBACKS` | `true` | If a request is declined by a safety classifier, the API retries on Anthropic's recommended fallback model (Claude API only; set `false` on Bedrock/Vertex/Foundry) |
-| `CHUNK_SIZE` / `CHUNK_OVERLAP` | `200` / `30` | Max tokens per chunk / overlap (embedding-model tokens; keep ≤ 256) |
-| `TOP_K` | `6` | Max chunks sent to the LLM per question |
-| `HYBRID_SEARCH` | `true` | Combine semantic and BM25 keyword search |
-| `CANDIDATE_POOL` | `20` | Candidates from each search before reranking |
-| `RERANKER_MODEL` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Cross-encoder reranker (`none` disables; about 90 MB, downloaded on first use) |
-| `RERANK_KEEP_RATIO` | `0.001` | Drop reranked chunks scoring below this fraction of the best |
-| `RELEVANCE_THRESHOLD` | `0.20` | Fallback without calling the LLM when no chunk reaches this cosine |
+| `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1000` / `200` | Characters per chunk / overlap |
+| `TOP_K` | `6` | Chunks retrieved per question |
+| `RELEVANCE_THRESHOLD` | `0.25` | Minimum cosine relevance (0–1) to count as evidence |
 | `HISTORY_TURNS` | `6` | Previous Q&A turns sent for follow-up context |
 | `KB_READ_ONLY` | `true` | Fixed knowledge base: no uploads, deletes or re-indexing (API returns 403; UI hides them) |
 | `MAX_UPLOAD_MB` | `25` | Per-file upload limit (only used when `KB_READ_ONLY=false`) |
@@ -255,7 +250,7 @@ While `KB_READ_ONLY=true` (the default), the write endpoints (`/documents/upload
 .venv/bin/python -m pytest -v
 ```
 
-The offline suite (93 tests) uses real document parsing, real embeddings, the real reranker and a real Chroma store. A deterministic `FakeLLM` stands in for the model, so no API key or network is needed once the embedding and reranker models are cached. It covers the required scenarios:
+The offline suite (81 tests) uses real document parsing, real embeddings and a real Chroma store. A deterministic `FakeLLM` stands in for the model, so no API key or network is needed after the embedding model is cached. It covers the required scenarios:
 
 | Requirement | Tests |
 |---|---|
@@ -271,7 +266,6 @@ The offline suite (93 tests) uses real document parsing, real embeddings, the re
 | Gemini client | request shape (system instruction, JSON schema, role mapping), fallback to the next model on 429/503/504, no fallback on auth/404 errors, error mapping, blocked/truncated/unreadable responses |
 | Embedded mode | `tests/test_embedded.py`: the dashboard's client drives upload, chat with citations, chunk inspection, delete and error reporting in-process |
 | Fixed knowledge base | `tests/test_fixed_kb.py`: all 10 documents present and categorised, indexed at startup with their categories, every write endpoint returns 403, editing or removing a file updates the index on restart |
-| Retrieval quality | `tests/test_retrieval_eval.py`: before vs after on a labelled 57-question set (recall, full and multi-document coverage, paraphrase recall, MRR, context size and precision, no answerable question withheld), plus unit tests for BM25, rank fusion, chunk selection, reranker ordering and fallback, and the off-topic gate. See [docs/RETRIEVAL_EVALUATION.md](docs/RETRIEVAL_EVALUATION.md) |
 | Citations | `tests/test_citations.py`: every citation field equals the stored chunk metadata (PDF, DOCX, TXT), exact PDF page and section, no page numbers for non-paged formats, out-of-range pages rejected, invented `(page N)` and `[S#]` references removed, highlights verbatim, heading lines never highlighted |
 | Claude client | exact request shape (model, adaptive thinking, effort, JSON schema, prompt caching, fallbacks beta) and error mapping, via the real SDK against a mocked HTTP transport |
 

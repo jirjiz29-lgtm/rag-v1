@@ -61,10 +61,10 @@ def make_settings(tmp: Path, **overrides) -> Settings:
         knowledge_base_dir=tmp / "kb",
         vectorstore_dir=tmp / "vs",
         collection_name="test_" + tmp.name.replace("-", "_")[:40],
-        chunk_size=200,  # tokens, as in production
-        chunk_overlap=30,
+        chunk_size=800,
+        chunk_overlap=150,
         top_k=6,
-        relevance_threshold=0.20,
+        relevance_threshold=0.25,
         kb_read_only=False,  # most tests add and remove documents
     )
     base.update(overrides)

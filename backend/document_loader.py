@@ -264,17 +264,4 @@ def load_document(path: Path, extra_metadata: Optional[dict] = None) -> List[Doc
         raise DocumentLoadError(
             f"No extractable text found in {path.name}. Scanned/image-only files need OCR before upload."
         )
-    title = document_title(path, docs)
-    for d in docs:
-        d.metadata["title"] = title
     return docs
-
-
-def document_title(path: Path, docs: List[Document]) -> str:
-    """A Markdown H1 if there is one, else the file name made readable ("08_Vendor_SOP.md" -> "Vendor SOP")."""
-    if path.suffix.lower() == ".md":
-        for line in docs[0].page_content.splitlines():
-            if re.match(r"^#\s+\S", line):
-                return clean_heading(line)
-    stem = re.sub(r"^[0-9]+[_\-\s]*", "", path.stem)
-    return re.sub(r"[_\-]+", " ", stem).strip() or path.stem

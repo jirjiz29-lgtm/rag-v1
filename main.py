@@ -93,10 +93,6 @@ def create_app(settings: Optional[Settings] = None, llm: Optional[LLMClient] = N
             "chunk_overlap": settings.chunk_overlap,
             "top_k": settings.top_k,
             "relevance_threshold": settings.relevance_threshold,
-            "hybrid_search": settings.hybrid_search,
-            "candidate_pool": settings.candidate_pool,
-            "reranker_model": settings.reranker_model or None,
-            "rerank_keep_ratio": settings.rerank_keep_ratio,
             "max_upload_mb": settings.max_upload_mb,
             "supported_extensions": sorted(SUPPORTED_EXTENSIONS),
             "categories": DOCUMENT_CATEGORIES,
@@ -119,11 +115,6 @@ def create_app(settings: Optional[Settings] = None, llm: Optional[LLMClient] = N
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         return result.to_dict()
-
-    @app.get("/suggestions")
-    def suggestions(request: Request, limit: int = 6) -> Dict:
-        """Starter questions generated from (and verified against) the indexed documents."""
-        return svc(request).suggestions.get(max(1, min(limit, 12)))
 
     @app.get("/documents")
     def list_documents(request: Request) -> List[Dict]:

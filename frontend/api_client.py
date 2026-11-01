@@ -55,9 +55,6 @@ class BackendClient:
     def stats(self) -> Dict:
         return self._request("GET", "/stats", timeout=15)
 
-    def suggestions(self, limit: int = 6) -> Dict:
-        return self._request("GET", "/suggestions", params={"limit": limit}, timeout=120)
-
     def upload(self, files: List[tuple], category: str) -> Dict:
         multipart = [("files", (name, data, mime or "application/octet-stream")) for name, data, mime in files]
         return self._request("POST", "/documents/upload", files=multipart, data={"category": category})
