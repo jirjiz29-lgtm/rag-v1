@@ -120,6 +120,11 @@ def create_app(settings: Optional[Settings] = None, llm: Optional[LLMClient] = N
             raise HTTPException(status_code=400, detail=str(exc))
         return result.to_dict()
 
+    @app.get("/suggestions")
+    def suggestions(request: Request, limit: int = 6) -> Dict:
+        """Starter questions generated from (and verified against) the indexed documents."""
+        return svc(request).suggestions.get(max(1, min(limit, 12)))
+
     @app.get("/documents")
     def list_documents(request: Request) -> List[Dict]:
         return svc(request).knowledge_base.list_documents()

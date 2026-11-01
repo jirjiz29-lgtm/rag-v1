@@ -12,6 +12,7 @@ from backend.rag_pipeline import ClaudeClient, LLMClient, RAGPipeline
 from backend.registry import DocumentRegistry
 from backend.reranker import CrossEncoderReranker
 from backend.retriever import Retriever
+from backend.suggestions import SuggestionService
 from backend.vector_database import VectorDatabase
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,7 @@ class Services:
     knowledge_base: KnowledgeBaseManager
     retriever: Retriever
     pipeline: RAGPipeline
+    suggestions: SuggestionService
 
 
 def build_services(settings: Settings, llm: Optional[LLMClient] = None) -> Services:
@@ -47,4 +49,6 @@ def build_services(settings: Settings, llm: Optional[LLMClient] = None) -> Servi
             llm = ClaudeClient(settings)
     if llm is None:
         logger.warning("%s not set - retrieval works, but questions cannot be answered.", settings.llm_key_name)
-    return Services(settings, vector_db, kb, retriever, RAGPipeline(retriever, llm, settings))
+    suggestions = SuggestionService(kb, retriever, llm, settings.vectorstore_dir / "suggestions.json",
+                                    settings.index_signature)
+    return Services(settings, vector_db, kb, retriever, RAGPipeline(retriever, llm, settings), suggestions)

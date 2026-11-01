@@ -257,12 +257,24 @@ class KnowledgeBaseManager:
             by_status[d.get("status", "unknown")] = by_status.get(d.get("status", "unknown"), 0) + 1
             if d.get("status") == "indexed":
                 by_category[d.get("category", "General")] = by_category.get(d.get("category", "General"), 0) + 1
+        indexed = [d for d in docs if d.get("status") == "indexed"]
+        by_file_type: Dict[str, int] = {}
+        for d in indexed:
+            by_file_type[d.get("file_type", "other")] = by_file_type.get(d.get("file_type", "other"), 0) + 1
+        chunks = self.vector_db.count()
         return {
             "total_documents": len(docs),
             "indexed_documents": by_status.get("indexed", 0),
             "failed_documents": by_status.get("failed", 0),
-            "total_chunks": self.vector_db.count(),
+            "processing_documents": by_status.get("processing", 0) + by_status.get("reindexing", 0),
+            "total_chunks": chunks,
+            "avg_chunks_per_document": round(chunks / len(indexed), 1) if indexed else 0,
+            "total_size_bytes": sum(d.get("size_bytes", 0) for d in indexed),
             "by_status": by_status,
             "by_category": by_category,
+            "by_file_type": by_file_type,
+            "chunks_by_document": sorted(
+                ({"filename": d["filename"], "category": d.get("category", "General"), "chunks": d.get("chunks", 0)}
+                 for d in indexed), key=lambda x: x["chunks"], reverse=True),
             "last_updated": max((d.get("updated_at", "") for d in docs), default=None),
         }
