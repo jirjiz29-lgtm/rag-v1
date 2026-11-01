@@ -1,0 +1,17 @@
+[
+  {
+    "name": "production retriever",
+    "recall": 0.8652482269503546,
+    "full_coverage": 0.8297872340425532,
+    "multi_coverage": 0.6,
+    "paraphrase_recall": 0.875,
+    "mrr": 0.7872340425531915,
+    "avg_chunks": 5.531914893617022,
+    "avg_tokens": 295.63829787234044,
+    "context_precision": 0.2,
+    "answerable_rejected": 1,
+    "unanswerable_rejected": 4,
+    "unanswerable_total": 10,
+    "ms_per_query": 5.3095532982791935
+  }
+]

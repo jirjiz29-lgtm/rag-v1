@@ -10,6 +10,7 @@ from backend.embeddings import get_embeddings
 from backend.knowledge_base import KnowledgeBaseManager
 from backend.rag_pipeline import ClaudeClient, LLMClient, RAGPipeline
 from backend.registry import DocumentRegistry
+from backend.reranker import CrossEncoderReranker
 from backend.retriever import Retriever
 from backend.vector_database import VectorDatabase
 
@@ -30,7 +31,13 @@ def build_services(settings: Settings, llm: Optional[LLMClient] = None) -> Servi
     vector_db = VectorDatabase(settings.vectorstore_dir, settings.collection_name, embeddings)
     registry = DocumentRegistry(settings.registry_path)
     kb = KnowledgeBaseManager(settings, vector_db, registry)
-    retriever = Retriever(vector_db, settings.top_k, settings.relevance_threshold)
+    use_reranker = settings.reranker_model.lower() not in {"", "none", "off"}
+    retriever = Retriever(
+        vector_db, settings.top_k, settings.relevance_threshold,
+        hybrid=settings.hybrid_search, candidate_pool=settings.candidate_pool,
+        reranker=CrossEncoderReranker(settings.reranker_model) if use_reranker else None,
+        keep_ratio=settings.rerank_keep_ratio,
+    )
     if llm is None and settings.llm_configured:
         if settings.llm_provider == "gemini":
             from backend.gemini_client import GeminiClient

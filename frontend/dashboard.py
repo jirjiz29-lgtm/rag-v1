@@ -666,7 +666,10 @@ def page_settings() -> None:
     with c2.container(border=True):
         st.markdown("**Indexing**")
         st.write(f"Embeddings: `{settings['embedding_model']}`")
-        st.write(f"Chunk size / overlap: `{settings['chunk_size']}` / `{settings['chunk_overlap']}` characters")
+        st.write(f"Chunk size / overlap: `{settings['chunk_size']}` / `{settings['chunk_overlap']}` tokens (split at headings first)")
+        search = "hybrid (semantic + keyword)" if settings.get("hybrid_search", True) else "semantic only"
+        rerank = f"reranked by `{settings['reranker_model']}`" if settings.get("reranker_model") else "no reranking"
+        st.write(f"Search: {search}, {settings.get('candidate_pool', 20)} candidates, {rerank}")
         if settings.get("kb_read_only", True):
             st.write("Knowledge base: fixed (read-only), loaded from `knowledge_base/`")
         else:
@@ -678,7 +681,8 @@ def page_settings() -> None:
     st.subheader("Retrieval (this session)")
     top_k = st.slider("Chunks to retrieve (top-k)", 1, 20, st.session_state.top_k or settings["top_k"])
     threshold = st.slider("Minimum relevance score", 0.0, 0.9, float(st.session_state.threshold or settings["relevance_threshold"]), 0.05,
-                          help="Chunks scoring below this are ignored. Higher = stricter grounding, more fallbacks.")
+                          help="If no passage reaches this similarity, the assistant answers with the fallback message "
+                               "without calling the AI model. Higher = more questions rejected up front.")
     st.session_state.top_k = top_k if top_k != settings["top_k"] else None
     st.session_state.threshold = threshold if abs(threshold - settings["relevance_threshold"]) > 1e-9 else None
 

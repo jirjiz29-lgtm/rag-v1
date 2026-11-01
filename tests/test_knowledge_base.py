@@ -90,7 +90,7 @@ def test_reindex_uses_new_chunk_settings(services, sample_dir):
     kb = services.knowledge_base
     res = kb.ingest_upload("employee_handbook.pdf", (sample_dir / "employee_handbook.pdf").read_bytes(), "Employee Handbook")
     before = services.vector_db.count_for_document(res["doc_id"])
-    kb.settings = kb.settings.with_overrides(chunk_size=150, chunk_overlap=20)
+    kb.settings = kb.settings.with_overrides(chunk_size=40, chunk_overlap=5)  # tokens
     out = kb.reindex_document(res["doc_id"])
     assert out["status"] == "reindexed"
     assert services.vector_db.count_for_document(res["doc_id"]) > before
@@ -140,3 +140,15 @@ def test_markdown_sections_and_code_fences(services, tmp_path):
     assert result["status"] == "indexed"
     top = services.retriever.retrieve("What share of the price is refunded for a cancellation 20 days before departure?")[0]
     assert top.document == "refund_policy.md" and top.section == "4. Refunds > Partial refunds"
+
+
+def test_restart_with_new_chunk_settings_reindexes_unchanged_files(services, sample_dir):
+    kb = services.knowledge_base
+    (kb.kb_dir / "employee_handbook.pdf").write_bytes((sample_dir / "employee_handbook.pdf").read_bytes())
+    assert [r["status"] for r in kb.sync_folder()] == ["indexed"]
+    assert kb.sync_folder() == []  # nothing changed
+    before = services.vector_db.count()
+    kb.settings = kb.settings.with_overrides(chunk_size=40, chunk_overlap=5)
+    assert [r["status"] for r in kb.sync_folder()] == ["reindexed"]
+    assert services.vector_db.count() > before
+    assert kb.sync_folder() == []

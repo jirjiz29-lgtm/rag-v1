@@ -133,7 +133,8 @@ class KnowledgeBaseManager:
         )
         try:
             docs = load_document(path, {"category": category})
-            chunks = chunk_documents(docs, doc_id, self.settings.chunk_size, self.settings.chunk_overlap)
+            chunks = chunk_documents(docs, doc_id, self.settings.chunk_size, self.settings.chunk_overlap,
+                                     self.settings.embedding_model)
             if not chunks:
                 raise DocumentLoadError("Document produced no indexable chunks.")
             for c in chunks:
@@ -160,6 +161,7 @@ class KnowledgeBaseManager:
             sections=len(sections),
             version=(existing or {}).get("version", 0) + 1,
             indexed_at=utc_now(),
+            index_signature=self.settings.index_signature,
         )
         status = "updated" if is_update else "indexed"
         logger.info("%s %s (%d chunks)", status.capitalize(), path.name, len(chunks))
@@ -222,6 +224,9 @@ class KnowledgeBaseManager:
                 try:
                     data = path.read_bytes()
                     if record and record.get("sha256") == sha256_bytes(data) and record.get("status") == "indexed":
+                        if record.get("index_signature") == self.settings.index_signature:
+                            continue  # unchanged file, indexed with the current chunking/embedding settings
+                        results.append(self.reindex_document(record["doc_id"]))  # settings changed since
                         continue
                     category = self._folder_categories().get(name) or (record or {}).get("category", "General")
                     results.append(self.ingest_path(path, category))

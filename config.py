@@ -87,11 +87,21 @@ class Settings:
     embedding_model: str = field(
         default_factory=lambda: os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
     )
-    chunk_size: int = field(default_factory=lambda: _env_int("CHUNK_SIZE", 1000))
-    chunk_overlap: int = field(default_factory=lambda: _env_int("CHUNK_OVERLAP", 200))
+    # Chunks are split at headings, then capped at CHUNK_SIZE embedding-model tokens. Keep this at or
+    # below the model's input limit (256 for all-MiniLM-L6-v2): text past the limit is never embedded.
+    chunk_size: int = field(default_factory=lambda: _env_int("CHUNK_SIZE", 200))
+    chunk_overlap: int = field(default_factory=lambda: _env_int("CHUNK_OVERLAP", 30))
     top_k: int = field(default_factory=lambda: _env_int("TOP_K", 6))
-    # Minimum cosine relevance (0-1) for a chunk to count as evidence.
-    relevance_threshold: float = field(default_factory=lambda: _env_float("RELEVANCE_THRESHOLD", 0.25))
+    # Retrieval pipeline: hybrid (semantic + BM25 keyword) candidates -> cross-encoder rerank -> top-k.
+    hybrid_search: bool = field(default_factory=lambda: _env_bool("HYBRID_SEARCH", True))
+    candidate_pool: int = field(default_factory=lambda: _env_int("CANDIDATE_POOL", 20))
+    reranker_model: str = field(
+        default_factory=lambda: os.getenv("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2").strip()
+    )
+    # Drop reranked chunks scoring below this fraction of the best chunk's score (0 keeps all top-k).
+    rerank_keep_ratio: float = field(default_factory=lambda: _env_float("RERANK_KEEP_RATIO", 0.001))
+    # If no chunk reaches this cosine similarity, answer with the fallback without calling the LLM.
+    relevance_threshold: float = field(default_factory=lambda: _env_float("RELEVANCE_THRESHOLD", 0.20))
     history_turns: int = field(default_factory=lambda: _env_int("HISTORY_TURNS", 6))
 
     # Storage
@@ -110,6 +120,11 @@ class Settings:
     api_host: str = field(default_factory=lambda: os.getenv("API_HOST", "127.0.0.1"))
     api_port: int = field(default_factory=lambda: _env_int("API_PORT", 8000))
     backend_url: str = field(default_factory=lambda: os.getenv("BACKEND_URL", "http://127.0.0.1:8000"))
+
+    @property
+    def index_signature(self) -> str:
+        """Everything that changes how documents are chunked or embedded; a change triggers re-indexing."""
+        return f"tokens:{self.chunk_size}/{self.chunk_overlap}|{self.embedding_model}"
 
     @property
     def categories_path(self) -> Path:
@@ -151,10 +166,14 @@ class Settings:
     def validate(self) -> None:
         if self.llm_provider not in {"gemini", "anthropic"}:
             raise ValueError("LLM_PROVIDER must be 'gemini' or 'anthropic'")
-        if self.chunk_size < 100:
-            raise ValueError("CHUNK_SIZE must be at least 100 characters")
+        if self.chunk_size < 32:
+            raise ValueError("CHUNK_SIZE must be at least 32 tokens")
         if not 0 <= self.chunk_overlap < self.chunk_size:
             raise ValueError("CHUNK_OVERLAP must be >= 0 and smaller than CHUNK_SIZE")
+        if self.candidate_pool < self.top_k:
+            raise ValueError("CANDIDATE_POOL must be at least TOP_K")
+        if not 0.0 <= self.rerank_keep_ratio < 1.0:
+            raise ValueError("RERANK_KEEP_RATIO must be between 0 and 1")
         if self.top_k < 1:
             raise ValueError("TOP_K must be at least 1")
         if not 0.0 <= self.relevance_threshold <= 1.0:
